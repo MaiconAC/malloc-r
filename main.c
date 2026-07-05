@@ -4,19 +4,28 @@
 
 #define MALLOC_BRK_SIZE 1000
 
+// Macro used to align the allocated memory in fixed 
+// memory words (usually 8 or 16 bytes)
+// it is important to reduce the number of times the processor
+// reads the memory, on older hardware it can cause exceptions.
+//
+// This macro works as a bit mask, where it rounds the number up
+// and ~7 inverts the last three bits, making it multiple of 8
+#define ALIGN(size) (((size) + 7) & ~7)
+
 // This malloc stores data based on a linked list, formatted:
 //
-//  _ *head (points to the start)
-// |
-// |           _ node->data (points to the data address)
-// |          |
-// |          |          _ node->size (size of the allocated data)
-// |          |         |
-// |          |         |       _ node->next (points to next node)
-// |          |         |      |
-// ----------------------      -----------------------
-// |	node  |	 data   |  --  |	node  |	 data    | -- NULL
-// ----------------------	   -----------------------
+//		  _ *head (points to the start)
+//		 |
+//		 |           _ node data (points to the data address, calculated on real time)
+//		 |          |
+//		 |          |          _ node->size (size of the allocated data)
+//		 |          |         |
+//		 |          |         |       _ node->next (points to next node)
+//		 |          |         |      |
+//		 ----------------------    -----------------------
+// prev--|	node  |	 data   |  --  |	node  |	 data    | -- next 
+//		 ----------------------	   -----------------------
 //
 // data address is node adress + sizeof(Node), since its stored after the node
 // next node address is after the data address + data allocated size
@@ -24,16 +33,21 @@
 typedef struct Node {
 	size_t size;
 	int status; // 0 = free, 1 = used
-	void *data;
 	struct Node *next;
 	struct Node *prev;
 } Node;
 
-Node *head;
+// static makes it visible only here
+static Node *head;
 
+static void* calc_data_address(Node* n);
 void *r_malloc(size_t size);
 void print_heap();
 void r_free(void *pointer);
+
+static void* calc_data_address(Node* n) {
+	return (void *)((char* )n + sizeof(Node));
+}
 
 void *r_malloc(size_t size) {
 	// on first allocation, increase program break and start 
@@ -46,14 +60,15 @@ void *r_malloc(size_t size) {
 		head->status = 0;
 		head->next = NULL;
 		head->prev = NULL;
-		head->data = (void *) ((char *)head + sizeof(Node));
 	}
 
 	Node *node = head;
 
+	size_t alignedSize = ALIGN(size);
+
 	while (node) {
 		// if the current node is used or dont have enouth space, jump to next
-		if (node->status == 1 || node->size < size) {
+		if (node->status == 1 || node->size < alignedSize) {
 			node = node->next;
 			continue;
 		}	
@@ -61,22 +76,22 @@ void *r_malloc(size_t size) {
 		size_t originalNodeSize = node->size;
 		Node *originalNodeNext = node->next;
 
+		void* dataAddress = calc_data_address(node);
+
 		// if the original node is not the same size as the required size,
 		// fragmentate the node into one with the same size and other with the remaining
-		if (originalNodeSize != size) {
+		if (originalNodeSize != alignedSize) {
 			// next address is saved
 			// when calculation the next address by adding x bytes, it is necessary to
 			// cast to char*, that is equivalent of 1 byte.
 			// If sum node* + x, the compiler will add x node sizes, not x bytes
-			node->size = size;
-			node->data = (void *)((char* )node + sizeof(Node));
-			node->next = (Node *)((char* )node->data + size);
+			node->size = alignedSize;
+			node->next = (Node *)((char* )dataAddress + alignedSize);
 			// node->prev remains the same
 			
 			// on the new empty node, the size of the remaining space
 			// need to remove the new data and node header from the new node
-			node->next->size = originalNodeSize - size - sizeof(Node); 
-			node->next->data = (void *)((char* )node->next + sizeof(Node));
+			node->next->size = originalNodeSize - alignedSize - sizeof(Node); 
 			node->next->status = 0;
 			node->next->next = originalNodeNext;
 			node->next->prev = node;
@@ -84,7 +99,7 @@ void *r_malloc(size_t size) {
 
 		node->status = 1;
 
-		return node->data;
+		return dataAddress;
 	}
 
 	return NULL;
@@ -96,7 +111,8 @@ void r_free(void *pointer) {
 	Node *node = head;
 
 	while (node) {
-		if (node->data != pointer) {
+		void* dataAddress = calc_data_address(node);
+		if (dataAddress != pointer) {
 			node = node->next;
 			continue;
 		}
@@ -133,11 +149,13 @@ void print_heap() {
 
 		char *status = node->status == 0 ? "FREE" : "USED";
 
+		void* dataAddress = calc_data_address(node);
+
 		printf(
 			"N%d - Address: %p, Data address: %p, Size: %zu, Status: %s\n", 
 			i, 
 			node,
-			node->data,
+			dataAddress,
 			node->size,
 			status
 		);
@@ -149,8 +167,7 @@ void print_heap() {
 }
 
 int main() {
-	int *p = r_malloc(sizeof(int));
-	*p = 100;
+	Node *p = r_malloc(sizeof(Node));
 
 	print_heap();
 
