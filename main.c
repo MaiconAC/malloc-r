@@ -26,24 +26,26 @@ typedef struct Node {
 	int status; // 0 = free, 1 = used
 	void *data;
 	struct Node *next;
+	struct Node *prev;
 } Node;
 
 Node *head;
 
-void *n_malloc(size_t size);
+void *r_malloc(size_t size);
 void print_heap();
-void free(void *pointer);
+void r_free(void *pointer);
 
-void *n_malloc(size_t size) {
-	// on first allocation, increase program break and start head
+void *r_malloc(size_t size) {
+	// on first allocation, increase program break and start 
 	if (!head) {
 		void *initialBrkAddress = sbrk(0);
 		brk(initialBrkAddress + MALLOC_BRK_SIZE);
 		head = initialBrkAddress; 
 
-		head->size = MALLOC_BRK_SIZE;
+		head->size = MALLOC_BRK_SIZE - sizeof(Node); //subtract initial node
 		head->status = 0;
 		head->next = NULL;
+		head->prev = NULL;
 		head->data = (void *) ((char *)head + sizeof(Node));
 	}
 
@@ -62,20 +64,22 @@ void *n_malloc(size_t size) {
 		// if the original node is not the same size as the required size,
 		// fragmentate the node into one with the same size and other with the remaining
 		if (originalNodeSize != size) {
-			node->size = size;
-
 			// next address is saved
 			// when calculation the next address by adding x bytes, it is necessary to
 			// cast to char*, that is equivalent of 1 byte.
 			// If sum node* + x, the compiler will add x node sizes, not x bytes
-			
+			node->size = size;
 			node->data = (void *)((char* )node + sizeof(Node));
 			node->next = (Node *)((char* )node->data + size);
+			// node->prev remains the same
 			
-			node->next->size = originalNodeSize - size; 
+			// on the new empty node, the size of the remaining space
+			// need to remove the new data and node header from the new node
+			node->next->size = originalNodeSize - size - sizeof(Node); 
 			node->next->data = (void *)((char* )node->next + sizeof(Node));
 			node->next->status = 0;
 			node->next->next = originalNodeNext;
+			node->next->prev = node;
 		}
 
 		node->status = 1;
@@ -85,6 +89,36 @@ void *n_malloc(size_t size) {
 
 	return NULL;
 };
+
+void r_free(void *pointer) {
+	if (!head || !pointer) return;
+
+	Node *node = head;
+
+	while (node) {
+		if (node->data != pointer) {
+			node = node->next;
+			continue;
+		}
+
+		node->status = 0;
+		
+		if (node->prev && node->prev->status == 0) {
+			node->prev->size += node->size + sizeof(Node);
+			node->prev->next = node->next;
+			node = node->prev;
+		}
+
+		if (node->next && node->next->status == 0) {
+			node->size += node->next->size + sizeof(Node);
+			node->next = node->next->next;
+		}
+
+		return;
+	}
+
+	printf("Address %p not found.", pointer);
+}
 
 void print_heap() {
 	printf("Head address: %p\n", head);
@@ -100,11 +134,11 @@ void print_heap() {
 		char *status = node->status == 0 ? "FREE" : "USED";
 
 		printf(
-			"N%d - Address: %p, Data address: %p, Size: %d, Status: %s\n", 
+			"N%d - Address: %p, Data address: %p, Size: %zu, Status: %s\n", 
 			i, 
 			node,
 			node->data,
-			(int)node->size,
+			node->size,
 			status
 		);
 
@@ -115,14 +149,23 @@ void print_heap() {
 }
 
 int main() {
-	// print_heap();
-	int *p = n_malloc(sizeof(int));
+	int *p = r_malloc(sizeof(int));
 	*p = 100;
-	//print_heap();
-	int *p2 = n_malloc(sizeof(char));
+
+	print_heap();
+
+	char *p2 = r_malloc(sizeof(char));
 	*p2 = 'a';
 
 	print_heap();
+
+	r_free(p2);
+	print_heap();
+
+
+	r_free(p);
+	print_heap();
+
 
 	brk(head);
 	return 0;
