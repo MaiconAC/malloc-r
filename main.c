@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <unistd.h>
 
-#define MALLOC_BRK_SIZE 1000
+#define MALLOC_BRK_SIZE 80
 
 // Macro used to align the allocated memory in fixed 
 // memory words (usually 8 or 16 bytes)
@@ -24,7 +24,7 @@
 //		 |          |         |       _ node->next (points to next node)
 //		 |          |         |      |
 //		 ----------------------    -----------------------
-// prev--|	node  |	 data   |  --  |	node  |	 data    | -- next 
+// 		|	node  |	 data   |  --  |	node  |	 data    | -- next 
 //		 ----------------------	   -----------------------
 //
 // data address is node adress + sizeof(Node), since its stored after the node
@@ -34,19 +34,25 @@ typedef struct Node {
 	size_t size;
 	int status; // 0 = free, 1 = used
 	struct Node *next;
-	struct Node *prev;
 } Node;
 
 // static makes it visible only here
 static Node *head;
+static Node *tail;
 
 static void* calc_data_address(Node* n);
+static void merge_nodes(Node* n, Node* n2);
 void *r_malloc(size_t size);
 void print_heap();
 void r_free(void *pointer);
 
 static void* calc_data_address(Node* n) {
 	return (void *)((char* )n + sizeof(Node));
+}
+
+static void merge_nodes(Node *n, Node *n2) {
+	n->size += n2->size + sizeof(Node);
+	n->next = n2->next;
 }
 
 void *r_malloc(size_t size) {
@@ -59,7 +65,8 @@ void *r_malloc(size_t size) {
 		head->size = MALLOC_BRK_SIZE - sizeof(Node); //subtract initial node
 		head->status = 0;
 		head->next = NULL;
-		head->prev = NULL;
+
+		tail = head;
 	}
 
 	Node *node = head;
@@ -94,7 +101,8 @@ void *r_malloc(size_t size) {
 			node->next->size = originalNodeSize - alignedSize - sizeof(Node); 
 			node->next->status = 0;
 			node->next->next = originalNodeNext;
-			node->next->prev = node;
+
+			if (tail == node) tail = node->next;
 		}
 
 		node->status = 1;
@@ -102,32 +110,59 @@ void *r_malloc(size_t size) {
 		return dataAddress;
 	}
 
-	return NULL;
+	// In case no available nodes were found, increases the program break
+	if (tail->status == 0) {
+		// If the last node is free, increase its size
+		tail->size += MALLOC_BRK_SIZE;
+	} else {
+		// If the last node is occupied, create a new one
+		Node* newNode = sbrk(MALLOC_BRK_SIZE);
+		newNode->size = MALLOC_BRK_SIZE - sizeof(Node);
+		newNode->status = 0;
+		newNode->next = NULL;
+		tail->next = newNode;
+		tail = newNode;
+	}
+
+	return r_malloc(size);
 };
 
 void r_free(void *pointer) {
 	if (!head || !pointer) return;
 
 	Node *node = head;
+	Node *prevNode = NULL;
 
 	while (node) {
 		void* dataAddress = calc_data_address(node);
 		if (dataAddress != pointer) {
+			prevNode = node;
 			node = node->next;
 			continue;
 		}
 
 		node->status = 0;
 		
-		if (node->prev && node->prev->status == 0) {
-			node->prev->size += node->size + sizeof(Node);
-			node->prev->next = node->next;
-			node = node->prev;
+		// Merge the current node with the previous one
+		if (prevNode && prevNode->status == 0) {
+			// This is for extreme cases, because the last used
+			// node will hardly be the last node, there is always some
+			// free space left
+			if (tail == node) {
+				tail = prevNode;
+			}
+
+			merge_nodes(prevNode, node);
+			node = prevNode;
 		}
 
+		// Merge the current node with the next one
 		if (node->next && node->next->status == 0) {
-			node->size += node->next->size + sizeof(Node);
-			node->next = node->next->next;
+			if (tail == node->next) {
+				tail = node;
+			}
+
+			merge_nodes(node, node->next);
 		}
 
 		return;
@@ -138,6 +173,7 @@ void r_free(void *pointer) {
 
 void print_heap() {
 	printf("Head address: %p\n", head);
+	printf("Tail address: %p\n", tail);
 
 	Node *node = head;
 
@@ -168,21 +204,18 @@ void print_heap() {
 
 int main() {
 	Node *p = r_malloc(sizeof(Node));
-
+	print_heap();
+	Node *p2 = r_malloc(sizeof(Node));
+	print_heap();
+	Node *p3 = r_malloc(sizeof(Node));
 	print_heap();
 
-	char *p2 = r_malloc(sizeof(char));
-	*p2 = 'a';
-
+	r_free(p3);
 	print_heap();
-
 	r_free(p2);
 	print_heap();
-
-
 	r_free(p);
 	print_heap();
-
 
 	brk(head);
 	return 0;
