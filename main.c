@@ -2,7 +2,8 @@
 #include <stdio.h>
 #include <unistd.h>
 
-#define MALLOC_BRK_SIZE 80
+// size of a memory page
+#define MALLOC_BRK_SIZE 4096
 
 // Macro used to align the allocated memory in fixed 
 // memory words (usually 8 or 16 bytes)
@@ -42,8 +43,9 @@ static Node *tail;
 
 static void* calc_data_address(Node* n);
 static void merge_nodes(Node* n, Node* n2);
+static void print_heap();
+
 void *r_malloc(size_t size);
-void print_heap();
 void r_free(void *pointer);
 
 static void* calc_data_address(Node* n) {
@@ -110,13 +112,16 @@ void *r_malloc(size_t size) {
 		return dataAddress;
 	}
 
+	void *brkAddress = calc_data_address(tail) + tail->size;
+	brk(brkAddress + MALLOC_BRK_SIZE);
+
 	// In case no available nodes were found, increases the program break
 	if (tail->status == 0) {
 		// If the last node is free, increase its size
 		tail->size += MALLOC_BRK_SIZE;
 	} else {
 		// If the last node is occupied, create a new one
-		Node* newNode = sbrk(MALLOC_BRK_SIZE);
+		Node* newNode = brkAddress;
 		newNode->size = MALLOC_BRK_SIZE - sizeof(Node);
 		newNode->status = 0;
 		newNode->next = NULL;
@@ -203,17 +208,13 @@ void print_heap() {
 }
 
 int main() {
-	Node *p = r_malloc(sizeof(Node));
-	print_heap();
-	Node *p2 = r_malloc(sizeof(Node));
-	print_heap();
-	Node *p3 = r_malloc(sizeof(Node));
+	int *p = r_malloc(sizeof(int));
+	*p = 1234;
+	char *p2 = r_malloc(sizeof(char));
+	*p2 = 's';
 	print_heap();
 
-	r_free(p3);
-	print_heap();
 	r_free(p2);
-	print_heap();
 	r_free(p);
 	print_heap();
 
